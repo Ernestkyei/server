@@ -1,0 +1,152 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum DeliveryStatus {
+  PENDING_DELIVERY
+  PROCESSING
+  DELIVERED
+  FAILED
+  REFUNDED
+}
+
+enum Network {
+  MTN
+  VODAFONE
+  AIRTELTIGO
+  GLO
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  
+  orders        Order[]
+  notifications Notification[]
+  
+  @@map("users")
+}
+
+model Bundle {
+  id            String   @id @default(uuid())
+  name          String
+  network       Network
+  dataSize      String
+  costPrice     Float
+  sellingPrice  Float
+  provider      String
+  providerCode  String
+  stock         Int      @default(0)
+  description   String?  @db.Text
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  orders        Order[]
+  
+  @@map("bundles")
+}
+
+model Order {
+  id                String         @id @default(uuid())
+  orderNumber       String         @unique
+  userId            String?        @map("user_id")
+  bundleId          String         @map("bundle_id")
+  phoneNumber       String         @map("phone_number")
+  amount            Float
+  paymentReference  String?        @map("payment_reference")
+  paymentStatus     PaymentStatus  @default(PENDING)
+  status            OrderStatus    @default(PENDING)
+  deliveryStatus    DeliveryStatus @default(PENDING_DELIVERY)
+  deliveredAt       DateTime?      @map("delivered_at")
+  deliveryMessage   String?        @map("delivery_message")
+  providerRequestId String?        @map("provider_request_id")
+  providerStatus    String?        @map("provider_status")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  user   User?  @relation(fields: [userId], references: [id])
+  bundle Bundle @relation(fields: [bundleId], references: [id])
+  
+  @@index([userId])
+  @@index([phoneNumber])
+  @@index([status])
+  @@index([deliveryStatus])
+  @@index([paymentReference])
+  @@map("orders")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  title     String
+  message   String   @db.Text
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([isRead])
+  @@map("notifications")
+}
+
+model ProviderAccount {
+  id            String    @id @default(uuid())
+  provider      String
+  balance       Float     @default(0)
+  creditLimit   Float     @default(0)
+  lastPayment   DateTime?
+  nextPayment   DateTime?
+  paymentAmount Float     @default(0)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  transactions ProviderTransaction[]
+  
+  @@map("provider_accounts")
+}
+
+model ProviderTransaction {
+  id          String   @id @default(uuid())
+  accountId   String   @map("account_id")
+  amount      Float
+  type        String
+  description String
+  reference   String
+  createdAt   DateTime @default(now())
+  
+  account ProviderAccount @relation(fields: [accountId], references: [id])
+  
+  @@index([accountId])
+  @@map("provider_transactions")
+}
