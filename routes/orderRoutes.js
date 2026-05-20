@@ -18,8 +18,11 @@ router.get('/customer/:phoneNumber', orderController.getOrdersByPhoneNumber);
 // Check delivery status
 router.get('/status/:orderId', orderController.checkDeliveryStatus);
 
-// Initialize payment for an order (ADD THIS)
+// Initialize payment for an order
 router.post('/:orderId/pay', orderController.initializePayment);
+
+// Verify payment (for callback from Paystack)
+router.get('/verify-payment/:reference', orderController.verifyPayment);
 
 // Paystack webhook (no auth - called by Paystack)
 router.post('/webhook/paystack', orderController.paystackWebhook);

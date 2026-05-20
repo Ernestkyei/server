@@ -1,5 +1,6 @@
 const orderService = require('../services/orderService');
 const prisma = require('../config/database');
+const axios = require('axios');
 
 // Create a new order (Guest checkout - no login required)
 exports.createOrder = async (req, res) => {
@@ -114,7 +115,7 @@ exports.checkDeliveryStatus = async (req, res) => {
   }
 };
 
-// Initialize payment
+// Initialize payment with REAL Paystack
 exports.initializePayment = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -138,26 +139,166 @@ exports.initializePayment = async (req, res) => {
       });
     }
     
-    const paymentReference = `PAY-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    console.log('Initializing payment for order:', order.orderNumber);
     
-    await orderService.updatePaymentReference(order.id, paymentReference);
+    const response = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: `guest-${order.phoneNumber}@kidave.com`,
+        amount: Math.round(order.amount * 100),
+        callback_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback`,
+        metadata: {
+          orderId: order.id,
+          orderNumber: order.orderNumber
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
     
-    const paymentUrl = `https://checkout.paystack.com/${paymentReference}`;
+    console.log('Paystack response received, reference:', response.data.data.reference);
+    
+    await orderService.updatePaymentReference(order.id, response.data.data.reference);
+    
+    console.log('Payment reference saved for order:', order.orderNumber);
     
     res.json({
       success: true,
       data: {
-        paymentReference,
-        paymentUrl,
+        authorization_url: response.data.data.authorization_url,
+        reference: response.data.data.reference,
         amount: order.amount,
         orderNumber: order.orderNumber
       }
     });
     
   } catch (error) {
+    console.error('Paystack error:', error.response?.data || error.message);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.response?.data?.message || 'Payment initialization failed'
+    });
+  }
+};
+
+// Verify payment (for callback) - FIXED VERSION
+exports.verifyPayment = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    
+    console.log('========================================');
+    console.log('VERIFYING PAYMENT FOR REFERENCE:', reference);
+    console.log('========================================');
+    
+    if (!reference) {
+      return res.json({ success: false, message: 'No reference provided' });
+    }
+    
+    // 1. First, try to find order by paymentReference
+    let order = await prisma.order.findFirst({
+      where: { paymentReference: reference },
+      include: { bundle: true }
+    });
+    
+    console.log('Order found by paymentReference:', order ? 'YES - ' + order.orderNumber : 'NO');
+    
+    // 2. If order exists and is already PAID, return success immediately
+    if (order && order.paymentStatus === 'PAID') {
+      console.log('Order already marked as PAID');
+      return res.json({
+        success: true,
+        message: 'Payment already verified',
+        order: {
+          orderNumber: order.orderNumber,
+          bundleName: order.bundle.name,
+          amount: order.amount,
+          phoneNumber: order.phoneNumber
+        }
+      });
+    }
+    
+    // 3. Verify with Paystack API
+    let paystackResponse;
+    try {
+      paystackResponse = await axios.get(
+        `https://api.paystack.co/transaction/verify/${reference}`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          }
+        }
+      );
+      console.log('Paystack API call successful');
+      console.log('Paystack status:', paystackResponse.data.data.status);
+    } catch (apiError) {
+      console.error('Paystack API error:', apiError.response?.data || apiError.message);
+      return res.json({
+        success: false,
+        message: 'Failed to verify with Paystack'
+      });
+    }
+    
+    // 4. If Paystack says payment was successful
+    if (paystackResponse.data.data.status === 'success') {
+      // If we don't have an order yet, try to find by orderNumber from metadata
+      if (!order) {
+        const metadata = paystackResponse.data.data.metadata;
+        if (metadata && metadata.orderNumber) {
+          order = await prisma.order.findFirst({
+            where: { orderNumber: metadata.orderNumber },
+            include: { bundle: true }
+          });
+          console.log('Order found by metadata:', order ? 'YES - ' + order.orderNumber : 'NO');
+        }
+      }
+      
+      // Update order
+      if (order) {
+        await prisma.order.update({
+          where: { id: order.id },
+          data: {
+            paymentStatus: 'PAID',
+            status: 'COMPLETED',
+            deliveryStatus: 'DELIVERED',
+            deliveredAt: new Date(),
+            deliveryMessage: 'Data bundle sent successfully to your phone',
+            paymentReference: reference
+          }
+        });
+        console.log('✅ Order updated to PAID and DELIVERED');
+      } else {
+        console.log('⚠️ No order found to update');
+      }
+      
+      // ALWAYS return success: true for successful payment
+      return res.json({
+        success: true,
+        message: 'Payment verified successfully',
+        order: order ? {
+          orderNumber: order.orderNumber,
+          bundleName: order.bundle.name,
+          amount: order.amount,
+          phoneNumber: order.phoneNumber
+        } : null
+      });
+    } else {
+      // Payment not successful
+      console.log('Payment not successful, status:', paystackResponse.data.data.status);
+      return res.json({
+        success: false,
+        message: 'Payment not successful',
+        status: paystackResponse.data.data.status
+      });
+    }
+  } catch (error) {
+    console.error('Verification error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Verification failed'
     });
   }
 };
@@ -167,13 +308,31 @@ exports.paystackWebhook = async (req, res) => {
   try {
     const { event, data } = req.body;
     
+    console.log('Webhook received:', event);
+    
     if (event === 'charge.success') {
-      await orderService.processSuccessfulPayment(data.reference);
-      console.log(`Payment successful: ${data.reference}`);
+      const order = await prisma.order.findFirst({
+        where: { paymentReference: data.reference },
+        include: { bundle: true }
+      });
+      
+      if (order && order.paymentStatus !== 'PAID') {
+        await prisma.order.update({
+          where: { id: order.id },
+          data: {
+            paymentStatus: 'PAID',
+            status: 'COMPLETED',
+            deliveryStatus: 'DELIVERED',
+            deliveredAt: new Date(),
+            deliveryMessage: 'Data bundle sent successfully'
+          }
+        });
+        
+        console.log(`✅ Payment confirmed via webhook for order ${order.orderNumber}`);
+      }
     }
     
     res.sendStatus(200);
-    
   } catch (error) {
     console.error('Webhook error:', error);
     res.sendStatus(500);
