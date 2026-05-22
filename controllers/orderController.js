@@ -185,7 +185,7 @@ exports.initializePayment = async (req, res) => {
   }
 };
 
-// Verify payment (for callback) - FIXED VERSION
+// Verify payment (for callback) - FIXED VERSION - ALWAYS ATTEMPTS DELIVERY
 exports.verifyPayment = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -198,30 +198,34 @@ exports.verifyPayment = async (req, res) => {
       return res.json({ success: false, message: 'No reference provided' });
     }
     
-    // 1. First, try to find order by paymentReference
+    // Find order by paymentReference
     let order = await prisma.order.findFirst({
       where: { paymentReference: reference },
       include: { bundle: true }
     });
     
-    console.log('Order found by paymentReference:', order ? 'YES - ' + order.orderNumber : 'NO');
+    console.log('Order found:', order ? 'YES - ' + order.orderNumber : 'NO');
+    console.log('Current order status:', order?.status);
+    console.log('Current payment status:', order?.paymentStatus);
+    console.log('Current delivery status:', order?.deliveryStatus);
     
-    // 2. If order exists and is already PAID, return success immediately
-    if (order && order.paymentStatus === 'PAID') {
-      console.log('Order already marked as PAID');
+    // If order is already COMPLETED, return success
+    if (order && order.status === 'COMPLETED') {
+      console.log('Order already COMPLETED');
       return res.json({
         success: true,
-        message: 'Payment already verified',
+        message: 'Order already completed',
         order: {
           orderNumber: order.orderNumber,
           bundleName: order.bundle.name,
           amount: order.amount,
-          phoneNumber: order.phoneNumber
+          phoneNumber: order.phoneNumber,
+          status: order.deliveryStatus
         }
       });
     }
     
-    // 3. Verify with Paystack API
+    // Verify with Paystack API
     let paystackResponse;
     try {
       paystackResponse = await axios.get(
@@ -232,7 +236,6 @@ exports.verifyPayment = async (req, res) => {
           }
         }
       );
-      console.log('Paystack API call successful');
       console.log('Paystack status:', paystackResponse.data.data.status);
     } catch (apiError) {
       console.error('Paystack API error:', apiError.response?.data || apiError.message);
@@ -242,9 +245,9 @@ exports.verifyPayment = async (req, res) => {
       });
     }
     
-    // 4. If Paystack says payment was successful
+    // If Paystack says payment was successful
     if (paystackResponse.data.data.status === 'success') {
-      // If we don't have an order yet, try to find by orderNumber from metadata
+      // Find order by metadata if not found
       if (!order) {
         const metadata = paystackResponse.data.data.metadata;
         if (metadata && metadata.orderNumber) {
@@ -256,37 +259,57 @@ exports.verifyPayment = async (req, res) => {
         }
       }
       
-      // Update order
       if (order) {
-        await prisma.order.update({
-          where: { id: order.id },
-          data: {
-            paymentStatus: 'PAID',
-            status: 'COMPLETED',
-            deliveryStatus: 'DELIVERED',
-            deliveredAt: new Date(),
-            deliveryMessage: 'Data bundle sent successfully to your phone',
-            paymentReference: reference
-          }
-        });
-        console.log('✅ Order updated to PAID and DELIVERED');
+        // Only update if not already PAID
+        if (order.paymentStatus !== 'PAID') {
+          await prisma.order.update({
+            where: { id: order.id },
+            data: {
+              paymentStatus: 'PAID',
+              status: 'PROCESSING',
+              paymentReference: reference
+            }
+          });
+          console.log('✅ Payment marked as PAID, status: PROCESSING');
+        }
+        
+        // ALWAYS attempt delivery (even if already PROCESSING)
+        console.log('🔴 Attempting delivery for order:', order.orderNumber);
+        try {
+          await orderService.deliverDataToProvider(order);
+          console.log('✅ Delivery attempted successfully');
+        } catch (deliveryError) {
+          console.error('❌ Delivery failed:', deliveryError);
+          await prisma.order.update({
+            where: { id: order.id },
+            data: {
+              deliveryStatus: 'FAILED',
+              deliveryMessage: deliveryError.message
+            }
+          });
+        }
       } else {
         console.log('⚠️ No order found to update');
       }
       
-      // ALWAYS return success: true for successful payment
+      // Get updated order
+      const updatedOrder = order ? await prisma.order.findFirst({
+        where: { id: order.id },
+        include: { bundle: true }
+      }) : null;
+      
       return res.json({
         success: true,
         message: 'Payment verified successfully',
-        order: order ? {
-          orderNumber: order.orderNumber,
-          bundleName: order.bundle.name,
-          amount: order.amount,
-          phoneNumber: order.phoneNumber
+        order: updatedOrder ? {
+          orderNumber: updatedOrder.orderNumber,
+          bundleName: updatedOrder.bundle.name,
+          amount: updatedOrder.amount,
+          phoneNumber: updatedOrder.phoneNumber,
+          status: updatedOrder.deliveryStatus
         } : null
       });
     } else {
-      // Payment not successful
       console.log('Payment not successful, status:', paystackResponse.data.data.status);
       return res.json({
         success: false,
@@ -321,14 +344,20 @@ exports.paystackWebhook = async (req, res) => {
           where: { id: order.id },
           data: {
             paymentStatus: 'PAID',
-            status: 'COMPLETED',
-            deliveryStatus: 'DELIVERED',
-            deliveredAt: new Date(),
-            deliveryMessage: 'Data bundle sent successfully'
+            status: 'PROCESSING',
+            paymentReference: data.reference
           }
         });
         
         console.log(`✅ Payment confirmed via webhook for order ${order.orderNumber}`);
+        
+        // Attempt delivery via webhook
+        try {
+          await orderService.deliverDataToProvider(order);
+          console.log(`✅ Bundle delivered via webhook for order ${order.orderNumber}`);
+        } catch (deliveryError) {
+          console.error('Webhook delivery failed:', deliveryError);
+        }
       }
     }
     
@@ -398,5 +427,60 @@ exports.getOrderStats = async (req, res) => {
     
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Manual fix endpoint for pending orders
+exports.fixPendingOrders = async (req, res) => {
+  try {
+    // Get all paid orders that are not delivered
+    const orders = await prisma.order.findMany({
+      where: {
+        paymentStatus: 'PAID',
+        deliveryStatus: { not: 'DELIVERED' }
+      },
+      include: { bundle: true }
+    });
+    
+    console.log(`Found ${orders.length} orders to fix`);
+    
+    let stockUpdates = {};
+    let fixedCount = 0;
+    
+    for (const order of orders) {
+      // Update order to delivered
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          deliveryStatus: 'DELIVERED',
+          status: 'COMPLETED',
+          deliveredAt: new Date(),
+          deliveryMessage: 'Fixed manually via API'
+        }
+      });
+      
+      // Track stock deductions
+      const bundleId = order.bundle_id;
+      stockUpdates[bundleId] = (stockUpdates[bundleId] || 0) + 1;
+      fixedCount++;
+    }
+    
+    // Deduct stock for each bundle
+    for (const [bundleId, count] of Object.entries(stockUpdates)) {
+      await prisma.bundle.update({
+        where: { id: bundleId },
+        data: { stock: { decrement: count } }
+      });
+      console.log(`Deducted ${count} from bundle ${bundleId}`);
+    }
+    
+    res.json({
+      success: true,
+      message: `Fixed ${fixedCount} orders`,
+      stockUpdates
+    });
+  } catch (error) {
+    console.error('Fix error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 };

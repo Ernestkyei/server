@@ -9,44 +9,42 @@ router.use(authMiddleware.protect);
 router.use(authMiddleware.adminOnly);
 
 // ==================== PROVIDER SYNC ROUTES ====================
-
-// Get available bundles from provider (RemaData)
 router.get('/provider/bundles', adminController.syncBundlesFromProvider);
-
-// Import selected bundles from provider to database
 router.post('/provider/import', validate(importBundlesSchema), adminController.importBundles);
-
-// Check provider account balance
 router.get('/provider/balance', adminController.getProviderBalance);
-
-// Get provider transaction history
 router.get('/provider/transactions', validateQuery(paginationSchema), adminController.getProviderTransactions);
 
 // ==================== BUNDLE MANAGEMENT ====================
-
-// Get all bundles (admin view with profit calculation)
 router.get('/bundles/all', validateQuery(paginationSchema), adminController.getAllBundles);
-
-// Update bundle pricing (cost price, selling price, stock)
 router.put('/bundles/:id/pricing', validate(updateBundlePricingSchema), adminController.updateBundlePricing);
 
 // ==================== ORDER MANAGEMENT ====================
-
-// Get all orders (admin view)
 router.get('/orders/all', adminController.getAllOrders);
-
-// Update order status
 router.put('/orders/:orderId/status', adminController.updateOrderStatus);
-
-// Retry failed delivery
 router.post('/orders/:orderId/retry', adminController.retryDelivery);
+router.get('/orders/stats', adminController.getOrderStats);
+
+// ==================== USER MANAGEMENT ====================
+router.get('/users', adminController.getAllUsers);
+router.get('/users/:id', adminController.getUserById);
+router.patch('/users/:id/status', adminController.updateUserStatus);
+router.delete('/users/:id', adminController.deleteUser);
 
 // ==================== DASHBOARD STATS ====================
-
-// Get dashboard statistics (sales, profit, etc.)
 router.get('/dashboard/stats', adminController.getDashboardStats);
 
-// Get order statistics
-router.get('/orders/stats', adminController.getOrderStats);
+// ==================== SETTINGS ROUTES ====================
+
+// Get general settings
+router.get('/settings/general', adminController.getGeneralSettings);
+
+// Update general settings
+router.put('/settings/general', adminController.updateGeneralSettings);
+
+// Get API keys
+router.get('/settings/api-keys', adminController.getApiKeys);
+
+// Update API keys
+router.put('/settings/api-keys', adminController.updateApiKeys);
 
 module.exports = router;

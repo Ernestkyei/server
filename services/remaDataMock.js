@@ -10,7 +10,7 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Mock: Get available bundles from provider
 const getBundles = async () => {
-  console.log('📡 MOCK: Fetching bundles from RemaData...');
+  console.log('MOCK: Fetching bundles from RemaData...');
   await delay(500);
   
   return {
@@ -36,13 +36,15 @@ const getBundles = async () => {
   };
 };
 
-// Mock: Purchase data bundle
+// Mock: Purchase data bundle - ALWAYS RETURNS DELIVERED
 const purchaseBundle = async (bundleCode, phoneNumber, reference) => {
-  console.log(`📡 MOCK: Purchasing bundle ${bundleCode} for ${phoneNumber}`);
+  console.log(`MOCK: Purchasing bundle ${bundleCode} for ${phoneNumber}`);
+  console.log(`Order Reference: ${reference}`);
   await delay(1000);
   
   const requestId = `MOCK-${Date.now()}-${requestCounter++}`;
-  const status = Math.random() > 0.1 ? 'DELIVERED' : 'PENDING';
+  // FORCE DELIVERED - NO RANDOM! Always return DELIVERED
+  const status = 'DELIVERED';
   
   // Find bundle to get correct amount
   const bundles = await getBundles();
@@ -57,23 +59,25 @@ const purchaseBundle = async (bundleCode, phoneNumber, reference) => {
     status,
     amount,
     createdAt: new Date().toISOString(),
-    message: status === 'DELIVERED' ? 'Bundle delivered successfully' : 'Processing'
+    message: 'Bundle delivered successfully'
   };
   
   mockTransactions.set(requestId, transaction);
   
+  console.log(`MOCK: Bundle DELIVERED for ${phoneNumber}`);
+  
   return {
     success: true,
     requestId,
-    status,
-    message: transaction.message,
+    status: 'DELIVERED',
+    message: 'Bundle delivered successfully',
     data: transaction
   };
 };
 
 // Mock: Check delivery status
 const checkStatus = async (requestId) => {
-  console.log(`📡 MOCK: Checking status for ${requestId}`);
+  console.log(`MOCK: Checking status for ${requestId}`);
   await delay(300);
   
   const transaction = mockTransactions.get(requestId);
@@ -85,32 +89,23 @@ const checkStatus = async (requestId) => {
     };
   }
   
-  // Simulate status update for pending transactions
-  if (transaction.status === 'PENDING') {
-    const random = Math.random();
-    if (random > 0.3) {
-      transaction.status = 'DELIVERED';
-      transaction.message = 'Bundle delivered successfully';
-      mockTransactions.set(requestId, transaction);
-    }
-  }
-  
+  // Always return DELIVERED
   return {
     success: true,
-    status: transaction.status,
+    status: 'DELIVERED',
     data: transaction
   };
 };
 
 // Mock: Get account balance
 const getBalance = async () => {
-  console.log('📡 MOCK: Fetching account balance...');
+  console.log('MOCK: Fetching account balance...');
   await delay(300);
   
   return {
     success: true,
     data: {
-      balance: 500.00,
+      balance: 5000.00,
       currency: 'GHS',
       pending: 0.00,
       creditLimit: 1000.00
@@ -120,7 +115,7 @@ const getBalance = async () => {
 
 // Mock: Get transaction history
 const getTransactions = async (limit = 10, offset = 0) => {
-  console.log('📡 MOCK: Fetching transaction history...');
+  console.log('MOCK: Fetching transaction history...');
   await delay(400);
   
   const transactions = Array.from(mockTransactions.values())

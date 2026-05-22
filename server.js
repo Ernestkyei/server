@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 5000;
 async function startServer() {
   try {
     await prisma.$connect();
-    console.log('✅ Database connected successfully');
+    console.log('Database connected successfully');
     
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
@@ -16,7 +16,7 @@ async function startServer() {
       console.log(`Auth API: http://localhost:${PORT}/api/auth`);
     });
   } catch (error) {
-    console.error('❌ Database connection failed:', error.message);
+    console.error('Database connection failed:', error.message);
     process.exit(1);
   }
 }

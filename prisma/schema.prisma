@@ -47,6 +47,7 @@ model User {
   password  String
   name      String
   role      Role     @default(USER)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   
   orders        Order[]
@@ -149,4 +150,29 @@ model ProviderTransaction {
   
   @@index([accountId])
   @@map("provider_transactions")
+}
+
+// ==================== ADD THESE MODELS ====================
+
+model Settings {
+  id            String   @id @default(uuid())
+  profitMargin  Int      @default(20)
+  lowStockAlert Int      @default(10)
+  currency      String   @default("GHS")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@map("settings")
+}
+
+model ApiKeys {
+  id                     String   @id @default(uuid())
+  remaDataKey            String?  @map("rema_data_key")
+  remaDataUrl            String?  @map("rema_data_url") @default("https://api.remadata.com/v1")
+  africaTalkingKey       String?  @map("africa_talking_key")
+  africaTalkingUsername  String?  @map("africa_talking_username")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  
+  @@map("api_keys")
 }
