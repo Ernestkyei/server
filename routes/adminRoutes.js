@@ -17,6 +17,7 @@ router.get('/provider/transactions', validateQuery(paginationSchema), adminContr
 // ==================== BUNDLE MANAGEMENT ====================
 router.get('/bundles/all', validateQuery(paginationSchema), adminController.getAllBundles);
 router.put('/bundles/:id/pricing', validate(updateBundlePricingSchema), adminController.updateBundlePricing);
+router.patch('/bundles/:id/toggle-status', adminController.toggleBundleStatus);
 
 // ==================== ORDER MANAGEMENT ====================
 router.get('/orders/all', adminController.getAllOrders);

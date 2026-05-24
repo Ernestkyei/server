@@ -131,14 +131,13 @@ exports.getAllBundles = async (req, res) => {
 exports.updateBundlePricing = async (req, res) => {
   try {
     const { id } = req.params;
-    const { costPrice, sellingPrice, stock } = req.body;
+    const { costPrice, sellingPrice } = req.body;
     
     const updatedBundle = await prisma.bundle.update({
       where: { id },
       data: {
         costPrice: costPrice || undefined,
-        sellingPrice: sellingPrice || undefined,
-        stock: stock !== undefined ? stock : undefined
+        sellingPrice: sellingPrice || undefined
       }
     });
     
@@ -152,6 +151,111 @@ exports.updateBundlePricing = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message
+    });
+  }
+};
+
+// Update bundle stock
+exports.updateBundleStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stock } = req.body;
+    
+    const updatedBundle = await prisma.bundle.update({
+      where: { id },
+      data: { stock }
+    });
+    
+    res.json({
+      success: true,
+      message: 'Bundle stock updated',
+      data: updatedBundle
+    });
+  } catch (error) {
+    console.error('Update stock error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update bundle stock'
+    });
+  }
+};
+
+// Toggle bundle status (enable/disable)
+exports.toggleBundleStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    
+    const updatedBundle = await prisma.bundle.update({
+      where: { id },
+      data: { isActive }
+    });
+    
+    res.json({
+      success: true,
+      message: `Bundle ${isActive ? 'enabled' : 'disabled'} successfully`,
+      data: updatedBundle
+    });
+  } catch (error) {
+    console.error('Toggle bundle status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update bundle status'
+    });
+  }
+};
+
+// Create new bundle
+exports.createBundle = async (req, res) => {
+  try {
+    const bundleData = req.body;
+    
+    const newBundle = await prisma.bundle.create({
+      data: {
+        name: bundleData.name,
+        network: bundleData.network,
+        dataSize: bundleData.dataSize,
+        costPrice: bundleData.costPrice,
+        sellingPrice: bundleData.sellingPrice,
+        stock: bundleData.stock || 0,
+        isActive: true,
+        provider: 'Manual',
+        providerCode: `MANUAL-${Date.now()}`
+      }
+    });
+    
+    res.status(201).json({
+      success: true,
+      message: 'Bundle created successfully',
+      data: newBundle
+    });
+  } catch (error) {
+    console.error('Create bundle error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create bundle'
+    });
+  }
+};
+
+// Delete bundle
+exports.deleteBundle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    await prisma.bundle.delete({
+      where: { id }
+    });
+    
+    res.json({
+      success: true,
+      message: 'Bundle deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete bundle error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete bundle'
     });
   }
 };
