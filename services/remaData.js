@@ -1,15 +1,13 @@
 // Auto-switch between Mock and Real API
-const isProduction = import.meta.env.PROD;
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
+// TEMPORARILY FORCE MOCK ON RENDER
+const FORCE_MOCK = true;  
 
 let service;
 
-if (!isProduction && USE_MOCK) {
-  // Local development with mock data
-  console.log('📦 Using MOCK data service');
+if (FORCE_MOCK) {
+  console.log('📦 FORCING MOCK data service');
   service = require('./remaDataMock');
 } else {
-  // Production on Render OR local with real API
   console.log('🌐 Using REAL API service');
   service = require('./remaDataAPI');
 }
