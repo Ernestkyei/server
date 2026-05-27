@@ -58,7 +58,7 @@ model User {
 
 model Bundle {
   id            String   @id @default(uuid())
-  name          String
+  name          String   @unique  // ✅ THIS IS THE FIX - ADDED @unique
   network       Network
   dataSize      String
   costPrice     Float
@@ -151,8 +151,6 @@ model ProviderTransaction {
   @@index([accountId])
   @@map("provider_transactions")
 }
-
-// ==================== ADD THESE MODELS ====================
 
 model Settings {
   id            String   @id @default(uuid())
