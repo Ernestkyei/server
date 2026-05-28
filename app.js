@@ -20,6 +20,7 @@ const allowedOrigins = [
   'http://localhost:3000',     // Client frontend (local)
   'http://localhost:4000',     // Admin frontend (local)
   'https://client-0eyf.onrender.com',  // Your live client frontend
+  'https://admin-wt9c.onrender.com',   // Your live admin frontend ← ADDED
   process.env.FRONTEND_URL,
   process.env.ADMIN_URL,
 ].filter(Boolean);
