@@ -15,12 +15,15 @@ const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
 
+// Trust Render's proxy (fixes express-rate-limit X-Forwarded-For error)
+app.set('trust proxy', 1);
+
 // Allowed origins for CORS
 const allowedOrigins = [
-  'http://localhost:3000',     // Client frontend (local)
-  'http://localhost:4000',     // Admin frontend (local)
-  'https://client-0eyf.onrender.com',  // Your live client frontend
-  'https://admin-wt9c.onrender.com',   // Your live admin frontend ← ADDED
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'https://client-0eyf.onrender.com',
+  'https://admin-wt9c.onrender.com',
   process.env.FRONTEND_URL,
   process.env.ADMIN_URL,
 ].filter(Boolean);
@@ -28,10 +31,9 @@ const allowedOrigins = [
 // Security middleware
 app.use(helmet());
 
-// CORS configuration - allow multiple origins
+// CORS configuration
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
@@ -67,7 +69,6 @@ const authLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
-// Admin API rate limiter (stricter)
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
@@ -94,7 +95,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 // ==================== ROUTES ====================
 
-// Health check (no rate limit)
+// Health check
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -111,18 +112,18 @@ app.get('/', (req, res) => {
   });
 });
 
-// Auth routes (public + protected with stricter rate limit)
+// Auth routes
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth', authRoutes);
 
-// Bundle routes (public)
+// Bundle routes
 app.use('/api/bundles', bundleRoutes);
 
-// Order routes (public - guest checkout)
+// Order routes
 app.use('/api/orders', orderRoutes);
 
-// Admin routes (protected - admin only with stricter rate limit)
+// Admin routes
 app.use('/api/admin', adminLimiter);
 app.use('/api/admin', adminRoutes);
 
@@ -140,22 +141,21 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);
   console.error(err.stack);
-  
-  // Handle specific error types
+
   if (err.name === 'UnauthorizedError') {
     return res.status(401).json({
       success: false,
       message: 'Invalid or expired token'
     });
   }
-  
+
   if (err.name === 'ValidationError') {
     return res.status(400).json({
       success: false,
       message: err.message
     });
   }
-  
+
   res.status(500).json({
     success: false,
     message: 'Internal server error',
