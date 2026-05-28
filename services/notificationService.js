@@ -9,7 +9,6 @@ exports.createNotification = async (userId, title, message, data = null) => {
         userId,
         title,
         message,
-        data: data ? JSON.stringify(data) : null,
         isRead: false
       }
     });
@@ -83,22 +82,22 @@ exports.deleteAllNotifications = async (userId) => {
 // Order related notifications
 exports.orderCreated = async (order) => {
   const message = `Your order #${order.orderNumber} has been created. Amount: ${order.amount} GHS`;
-  await exports.createNotification(order.userId, 'Order Created', message, { orderId: order.id });
+  await exports.createNotification(order.userId, 'Order Created', message);
 };
 
 exports.paymentConfirmed = async (order) => {
   const message = `Payment confirmed for order #${order.orderNumber}. Your data bundle will be delivered shortly.`;
-  await exports.createNotification(order.userId, 'Payment Confirmed', message, { orderId: order.id });
+  await exports.createNotification(order.userId, 'Payment Confirmed', message);
 };
 
 exports.orderDelivered = async (order) => {
   const message = `Your data bundle (${order.bundle.name}) has been sent to ${order.phoneNumber}`;
-  await exports.createNotification(order.userId, 'Data Delivered 🎉', message, { orderId: order.id });
+  await exports.createNotification(order.userId, 'Data Delivered 🎉', message);
 };
 
 exports.orderFailed = async (order, reason) => {
   const message = `Order #${order.orderNumber} failed: ${reason}. Please contact support.`;
-  await exports.createNotification(order.userId, 'Order Failed ❌', message, { orderId: order.id });
+  await exports.createNotification(order.userId, 'Order Failed ❌', message);
 };
 
 // Bundle related notifications (admin only)
@@ -111,8 +110,7 @@ exports.bundleLowStock = async (bundle) => {
     await exports.createNotification(
       admin.id, 
       'Low Stock Alert ⚠️', 
-      `Bundle ${bundle.name} has only ${bundle.stock} units left.`,
-      { bundleId: bundle.id }
+      `Bundle ${bundle.name} has only ${bundle.stock} units left.`
     );
   }
 };
@@ -133,8 +131,7 @@ exports.providerBalanceLow = async (provider, balance) => {
     await exports.createNotification(
       admin.id,
       'Provider Balance Low ⚠️',
-      `${provider} balance is low: ${balance} GHS. Please recharge.`,
-      { provider }
+      `${provider} balance is low: ${balance} GHS. Please recharge.`
     );
   }
 };
