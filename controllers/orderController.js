@@ -141,12 +141,22 @@ exports.initializePayment = async (req, res) => {
     
     console.log('Initializing payment for order:', order.orderNumber);
     
+    // Determine callback URL based on environment
+    let callbackUrl;
+    if (process.env.NODE_ENV === 'production') {
+      callbackUrl = `${process.env.FRONTEND_URL || 'https://admin-wt9c.onrender.com'}/payment/callback`;
+    } else {
+      callbackUrl = 'http://localhost:3000/payment/callback';
+    }
+    
+    console.log('Using callback URL:', callbackUrl);
+    
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
         email: `guest-${order.phoneNumber}@kidave.com`,
         amount: Math.round(order.amount * 100),
-        callback_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback`,
+        callback_url: callbackUrl,
         metadata: {
           orderId: order.id,
           orderNumber: order.orderNumber
@@ -270,16 +280,16 @@ exports.verifyPayment = async (req, res) => {
               paymentReference: reference
             }
           });
-          console.log('✅ Payment marked as PAID, status: PROCESSING');
+          console.log('Payment marked as PAID, status: PROCESSING');
         }
         
         // ALWAYS attempt delivery (even if already PROCESSING)
-        console.log('🔴 Attempting delivery for order:', order.orderNumber);
+        console.log('Attempting delivery for order:', order.orderNumber);
         try {
           await orderService.deliverDataToProvider(order);
-          console.log('✅ Delivery attempted successfully');
+          console.log('Delivery attempted successfully');
         } catch (deliveryError) {
-          console.error('❌ Delivery failed:', deliveryError);
+          console.error('Delivery failed:', deliveryError);
           await prisma.order.update({
             where: { id: order.id },
             data: {
@@ -289,7 +299,7 @@ exports.verifyPayment = async (req, res) => {
           });
         }
       } else {
-        console.log('⚠️ No order found to update');
+        console.log('No order found to update');
       }
       
       // Get updated order
@@ -349,12 +359,12 @@ exports.paystackWebhook = async (req, res) => {
           }
         });
         
-        console.log(`✅ Payment confirmed via webhook for order ${order.orderNumber}`);
+        console.log(`Payment confirmed via webhook for order ${order.orderNumber}`);
         
         // Attempt delivery via webhook
         try {
           await orderService.deliverDataToProvider(order);
-          console.log(`✅ Bundle delivered via webhook for order ${order.orderNumber}`);
+          console.log(`Bundle delivered via webhook for order ${order.orderNumber}`);
         } catch (deliveryError) {
           console.error('Webhook delivery failed:', deliveryError);
         }
