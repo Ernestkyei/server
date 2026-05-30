@@ -2,27 +2,42 @@ const orderService = require('../services/orderService');
 const prisma = require('../config/database');
 const axios = require('axios');
 
+// ==================== HELPER ====================
+
+const formatOrderResponse = (order) => ({
+  orderNumber: order.orderNumber,
+  network: order.bundle.network,
+  dataSize: order.bundle.dataSize,
+  amount: order.amount,
+  sellingPrice: order.amount,
+  phoneNumber: order.phoneNumber,
+  deliveryStatus: order.deliveryStatus,
+  status: order.deliveryStatus
+});
+
+// ==================== CONTROLLERS ====================
+
 // Create a new order (Guest checkout - no login required)
 exports.createOrder = async (req, res) => {
   try {
     const { bundleId, phoneNumber, customerEmail, customerName } = req.body;
-    
+
     if (!bundleId || !phoneNumber) {
       return res.status(400).json({
         success: false,
         message: 'Bundle ID and phone number are required'
       });
     }
-    
+
     if (!/^0[0-9]{9}$/.test(phoneNumber)) {
       return res.status(400).json({
         success: false,
         message: 'Phone number must be 10 digits starting with 0'
       });
     }
-    
+
     const order = await orderService.createOrder(bundleId, phoneNumber, customerEmail, customerName);
-    
+
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
@@ -36,7 +51,7 @@ exports.createOrder = async (req, res) => {
         createdAt: order.createdAt
       }
     });
-    
+
   } catch (error) {
     res.status(400).json({
       success: false,
@@ -50,7 +65,7 @@ exports.getOrderByNumber = async (req, res) => {
   try {
     const { orderNumber } = req.params;
     const order = await orderService.getOrderByNumber(orderNumber);
-    
+
     res.json({
       success: true,
       data: {
@@ -67,7 +82,7 @@ exports.getOrderByNumber = async (req, res) => {
         deliveredAt: order.deliveredAt
       }
     });
-    
+
   } catch (error) {
     res.status(404).json({
       success: false,
@@ -81,13 +96,13 @@ exports.getOrdersByPhoneNumber = async (req, res) => {
   try {
     const { phoneNumber } = req.params;
     const orders = await orderService.getOrdersByPhoneNumber(phoneNumber);
-    
+
     res.json({
       success: true,
       count: orders.length,
       data: orders
     });
-    
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -101,12 +116,12 @@ exports.checkDeliveryStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const status = await orderService.checkDeliveryStatus(orderId);
-    
+
     res.json({
       success: true,
       data: status
     });
-    
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -115,42 +130,38 @@ exports.checkDeliveryStatus = async (req, res) => {
   }
 };
 
-// Initialize payment with REAL Paystack
+// Initialize payment with Paystack
 exports.initializePayment = async (req, res) => {
   try {
     const { orderId } = req.params;
-    
+
     const order = await prisma.order.findUnique({
       where: { id: orderId },
       include: { bundle: true }
     });
-    
+
     if (!order) {
       return res.status(404).json({
         success: false,
         message: 'Order not found'
       });
     }
-    
+
     if (order.paymentStatus !== 'PENDING') {
       return res.status(400).json({
         success: false,
         message: 'Payment already processed'
       });
     }
-    
+
     console.log('Initializing payment for order:', order.orderNumber);
-    
-    // Determine callback URL based on environment
-    let callbackUrl;
-    if (process.env.NODE_ENV === 'production') {
-      callbackUrl = `${process.env.FRONTEND_URL || 'https://admin-wt9c.onrender.com'}/payment/callback`;
-    } else {
-      callbackUrl = 'http://localhost:3000/payment/callback';
-    }
-    
+
+    const callbackUrl = process.env.NODE_ENV === 'production'
+      ? `${process.env.FRONTEND_URL || 'https://admin-wt9c.onrender.com'}/payment/callback`
+      : 'http://localhost:3000/payment/callback';
+
     console.log('Using callback URL:', callbackUrl);
-    
+
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
@@ -169,13 +180,13 @@ exports.initializePayment = async (req, res) => {
         }
       }
     );
-    
+
     console.log('Paystack response received, reference:', response.data.data.reference);
-    
+
     await orderService.updatePaymentReference(order.id, response.data.data.reference);
-    
+
     console.log('Payment reference saved for order:', order.orderNumber);
-    
+
     res.json({
       success: true,
       data: {
@@ -185,7 +196,7 @@ exports.initializePayment = async (req, res) => {
         orderNumber: order.orderNumber
       }
     });
-    
+
   } catch (error) {
     console.error('Paystack error:', error.response?.data || error.message);
     res.status(500).json({
@@ -195,46 +206,40 @@ exports.initializePayment = async (req, res) => {
   }
 };
 
-// Verify payment (for callback) - FIXED VERSION - ALWAYS ATTEMPTS DELIVERY
+// Verify payment (callback from Paystack)
 exports.verifyPayment = async (req, res) => {
   try {
     const { reference } = req.params;
-    
+
     console.log('========================================');
     console.log('VERIFYING PAYMENT FOR REFERENCE:', reference);
     console.log('========================================');
-    
+
     if (!reference) {
       return res.json({ success: false, message: 'No reference provided' });
     }
-    
+
     // Find order by paymentReference
     let order = await prisma.order.findFirst({
       where: { paymentReference: reference },
       include: { bundle: true }
     });
-    
+
     console.log('Order found:', order ? 'YES - ' + order.orderNumber : 'NO');
     console.log('Current order status:', order?.status);
     console.log('Current payment status:', order?.paymentStatus);
     console.log('Current delivery status:', order?.deliveryStatus);
-    
-    // If order is already COMPLETED, return success
+
+    // If order is already COMPLETED, return success immediately
     if (order && order.status === 'COMPLETED') {
-      console.log('Order already COMPLETED');
+      console.log('Order already COMPLETED, returning success');
       return res.json({
         success: true,
         message: 'Order already completed',
-        order: {
-          orderNumber: order.orderNumber,
-          bundleName: order.bundle.name,
-          amount: order.amount,
-          phoneNumber: order.phoneNumber,
-          status: order.deliveryStatus
-        }
+        order: formatOrderResponse(order)
       });
     }
-    
+
     // Verify with Paystack API
     let paystackResponse;
     try {
@@ -254,10 +259,11 @@ exports.verifyPayment = async (req, res) => {
         message: 'Failed to verify with Paystack'
       });
     }
-    
-    // If Paystack says payment was successful
+
+    // If Paystack confirms payment was successful
     if (paystackResponse.data.data.status === 'success') {
-      // Find order by metadata if not found
+
+      // Try to find order by metadata if not found by reference
       if (!order) {
         const metadata = paystackResponse.data.data.metadata;
         if (metadata && metadata.orderNumber) {
@@ -268,9 +274,9 @@ exports.verifyPayment = async (req, res) => {
           console.log('Order found by metadata:', order ? 'YES - ' + order.orderNumber : 'NO');
         }
       }
-      
+
       if (order) {
-        // Only update if not already PAID
+        // Only mark as PAID if not already paid
         if (order.paymentStatus !== 'PAID') {
           await prisma.order.update({
             where: { id: order.id },
@@ -282,8 +288,8 @@ exports.verifyPayment = async (req, res) => {
           });
           console.log('Payment marked as PAID, status: PROCESSING');
         }
-        
-        // ALWAYS attempt delivery (even if already PROCESSING)
+
+        // Attempt delivery
         console.log('Attempting delivery for order:', order.orderNumber);
         try {
           await orderService.deliverDataToProvider(order);
@@ -301,24 +307,21 @@ exports.verifyPayment = async (req, res) => {
       } else {
         console.log('No order found to update');
       }
-      
-      // Get updated order
-      const updatedOrder = order ? await prisma.order.findFirst({
-        where: { id: order.id },
-        include: { bundle: true }
-      }) : null;
-      
+
+      // Get the latest updated order to return correct status
+      const updatedOrder = order
+        ? await prisma.order.findFirst({
+            where: { id: order.id },
+            include: { bundle: true }
+          })
+        : null;
+
       return res.json({
         success: true,
         message: 'Payment verified successfully',
-        order: updatedOrder ? {
-          orderNumber: updatedOrder.orderNumber,
-          bundleName: updatedOrder.bundle.name,
-          amount: updatedOrder.amount,
-          phoneNumber: updatedOrder.phoneNumber,
-          status: updatedOrder.deliveryStatus
-        } : null
+        order: updatedOrder ? formatOrderResponse(updatedOrder) : null
       });
+
     } else {
       console.log('Payment not successful, status:', paystackResponse.data.data.status);
       return res.json({
@@ -327,6 +330,7 @@ exports.verifyPayment = async (req, res) => {
         status: paystackResponse.data.data.status
       });
     }
+
   } catch (error) {
     console.error('Verification error:', error);
     return res.status(500).json({
@@ -340,15 +344,15 @@ exports.verifyPayment = async (req, res) => {
 exports.paystackWebhook = async (req, res) => {
   try {
     const { event, data } = req.body;
-    
+
     console.log('Webhook received:', event);
-    
+
     if (event === 'charge.success') {
       const order = await prisma.order.findFirst({
         where: { paymentReference: data.reference },
         include: { bundle: true }
       });
-      
+
       if (order && order.paymentStatus !== 'PAID') {
         await prisma.order.update({
           where: { id: order.id },
@@ -358,10 +362,9 @@ exports.paystackWebhook = async (req, res) => {
             paymentReference: data.reference
           }
         });
-        
+
         console.log(`Payment confirmed via webhook for order ${order.orderNumber}`);
-        
-        // Attempt delivery via webhook
+
         try {
           await orderService.deliverDataToProvider(order);
           console.log(`Bundle delivered via webhook for order ${order.orderNumber}`);
@@ -370,8 +373,9 @@ exports.paystackWebhook = async (req, res) => {
         }
       }
     }
-    
+
     res.sendStatus(200);
+
   } catch (error) {
     console.error('Webhook error:', error);
     res.sendStatus(500);
@@ -383,9 +387,9 @@ exports.getAllOrders = async (req, res) => {
   try {
     const { status, page = 1, limit = 50 } = req.query;
     const result = await orderService.getAllOrders(status, parseInt(page), parseInt(limit));
-    
+
     res.json({ success: true, data: result });
-    
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -396,11 +400,11 @@ exports.updateOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const { status, deliveryStatus } = req.body;
-    
+
     const order = await orderService.updateOrderStatus(orderId, status, deliveryStatus);
-    
+
     res.json({ success: true, message: 'Order status updated', data: order });
-    
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -410,20 +414,20 @@ exports.updateOrderStatus = async (req, res) => {
 exports.retryDelivery = async (req, res) => {
   try {
     const { orderId } = req.params;
-    
+
     const order = await prisma.order.findUnique({
       where: { id: orderId },
       include: { bundle: true }
     });
-    
+
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    
+
     await orderService.deliverDataToProvider(order);
-    
+
     res.json({ success: true, message: 'Delivery retry initiated' });
-    
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -434,7 +438,7 @@ exports.getOrderStats = async (req, res) => {
   try {
     const stats = await orderService.getOrderStats();
     res.json({ success: true, data: stats });
-    
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -443,7 +447,6 @@ exports.getOrderStats = async (req, res) => {
 // Manual fix endpoint for pending orders
 exports.fixPendingOrders = async (req, res) => {
   try {
-    // Get all paid orders that are not delivered
     const orders = await prisma.order.findMany({
       where: {
         paymentStatus: 'PAID',
@@ -451,14 +454,13 @@ exports.fixPendingOrders = async (req, res) => {
       },
       include: { bundle: true }
     });
-    
+
     console.log(`Found ${orders.length} orders to fix`);
-    
+
     let stockUpdates = {};
     let fixedCount = 0;
-    
+
     for (const order of orders) {
-      // Update order to delivered
       await prisma.order.update({
         where: { id: order.id },
         data: {
@@ -468,14 +470,12 @@ exports.fixPendingOrders = async (req, res) => {
           deliveryMessage: 'Fixed manually via API'
         }
       });
-      
-      // Track stock deductions
-      const bundleId = order.bundle_id;
+
+      const bundleId = order.bundleId;
       stockUpdates[bundleId] = (stockUpdates[bundleId] || 0) + 1;
       fixedCount++;
     }
-    
-    // Deduct stock for each bundle
+
     for (const [bundleId, count] of Object.entries(stockUpdates)) {
       await prisma.bundle.update({
         where: { id: bundleId },
@@ -483,12 +483,13 @@ exports.fixPendingOrders = async (req, res) => {
       });
       console.log(`Deducted ${count} from bundle ${bundleId}`);
     }
-    
+
     res.json({
       success: true,
       message: `Fixed ${fixedCount} orders`,
       stockUpdates
     });
+
   } catch (error) {
     console.error('Fix error:', error);
     res.status(500).json({ success: false, error: error.message });
