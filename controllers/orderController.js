@@ -17,7 +17,9 @@ const formatOrderResponse = (order) => ({
 
 // ==================== CONTROLLERS ====================
 
-// Create a new order (Guest checkout - no login required)
+// Create a new order
+// Works for both guests and authenticated users.
+// If the request has a valid JWT (req.user), the order is linked to that user.
 exports.createOrder = async (req, res) => {
   try {
     const { bundleId, phoneNumber, customerEmail, customerName } = req.body;
@@ -36,7 +38,16 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    const order = await orderService.createOrder(bundleId, phoneNumber, customerEmail, customerName);
+    // ✅ FIX: pass userId so the order is linked to the logged-in user
+    const userId = req.user?.id || null;
+
+    const order = await orderService.createOrder(
+      bundleId,
+      phoneNumber,
+      customerEmail,
+      customerName,
+      userId          // <-- new argument
+    );
 
     res.status(201).json({
       success: true,
@@ -154,6 +165,14 @@ exports.initializePayment = async (req, res) => {
       });
     }
 
+    // ✅ FIX: if the order has no userId yet but the caller is authenticated, patch it now
+    if (!order.userId && req.user?.id) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { userId: req.user.id }
+      });
+    }
+
     console.log('Initializing payment for order:', order.orderNumber);
 
     const callbackUrl = process.env.NODE_ENV === 'production'
@@ -165,12 +184,13 @@ exports.initializePayment = async (req, res) => {
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
-        email: `guest-${order.phoneNumber}@kidave.com`,
+        email: order.customerEmail || `guest-${order.phoneNumber}@kidave.com`,
         amount: Math.round(order.amount * 100),
         callback_url: callbackUrl,
         metadata: {
           orderId: order.id,
-          orderNumber: order.orderNumber
+          orderNumber: order.orderNumber,
+          userId: order.userId || req.user?.id || null  // ✅ carry userId in metadata as fallback
         }
       },
       {
@@ -219,7 +239,6 @@ exports.verifyPayment = async (req, res) => {
       return res.json({ success: false, message: 'No reference provided' });
     }
 
-    // Find order by paymentReference
     let order = await prisma.order.findFirst({
       where: { paymentReference: reference },
       include: { bundle: true }
@@ -230,7 +249,6 @@ exports.verifyPayment = async (req, res) => {
     console.log('Current payment status:', order?.paymentStatus);
     console.log('Current delivery status:', order?.deliveryStatus);
 
-    // If order is already COMPLETED, return success immediately
     if (order && order.status === 'COMPLETED') {
       console.log('Order already COMPLETED, returning success');
       return res.json({
@@ -240,7 +258,6 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    // Verify with Paystack API
     let paystackResponse;
     try {
       paystackResponse = await axios.get(
@@ -260,13 +277,11 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    // If Paystack confirms payment was successful
     if (paystackResponse.data.data.status === 'success') {
+      const metadata = paystackResponse.data.data.metadata;
 
-      // Try to find order by metadata if not found by reference
       if (!order) {
-        const metadata = paystackResponse.data.data.metadata;
-        if (metadata && metadata.orderNumber) {
+        if (metadata?.orderNumber) {
           order = await prisma.order.findFirst({
             where: { orderNumber: metadata.orderNumber },
             include: { bundle: true }
@@ -276,20 +291,26 @@ exports.verifyPayment = async (req, res) => {
       }
 
       if (order) {
-        // Only mark as PAID if not already paid
+        // ✅ FIX: resolve userId from order, metadata, or authenticated caller
+        const resolvedUserId =
+          order.userId ||
+          metadata?.userId ||
+          req.user?.id ||
+          null;
+
         if (order.paymentStatus !== 'PAID') {
           await prisma.order.update({
             where: { id: order.id },
             data: {
               paymentStatus: 'PAID',
               status: 'PROCESSING',
-              paymentReference: reference
+              paymentReference: reference,
+              ...(resolvedUserId && { userId: resolvedUserId }) // ✅ patch userId if missing
             }
           });
-          console.log('Payment marked as PAID, status: PROCESSING');
+          console.log('Payment marked as PAID, userId saved:', resolvedUserId);
         }
 
-        // Attempt delivery
         console.log('Attempting delivery for order:', order.orderNumber);
         try {
           await orderService.deliverDataToProvider(order);
@@ -308,7 +329,6 @@ exports.verifyPayment = async (req, res) => {
         console.log('No order found to update');
       }
 
-      // Get the latest updated order to return correct status
       const updatedOrder = order
         ? await prisma.order.findFirst({
             where: { id: order.id },
@@ -354,12 +374,16 @@ exports.paystackWebhook = async (req, res) => {
       });
 
       if (order && order.paymentStatus !== 'PAID') {
+        // ✅ FIX: also save userId from metadata during webhook if missing
+        const userId = order.userId || data.metadata?.userId || null;
+
         await prisma.order.update({
           where: { id: order.id },
           data: {
             paymentStatus: 'PAID',
             status: 'PROCESSING',
-            paymentReference: data.reference
+            paymentReference: data.reference,
+            ...(userId && { userId })
           }
         });
 
@@ -385,7 +409,7 @@ exports.paystackWebhook = async (req, res) => {
 // Admin: Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, page = 1, limit = 50 } = req.query;
+    const { status, page = 1, limit = 50 } = req.query; 
     const result = await orderService.getAllOrders(status, parseInt(page), parseInt(limit));
 
     res.json({ success: true, data: result });
@@ -493,5 +517,175 @@ exports.fixPendingOrders = async (req, res) => {
   } catch (error) {
     console.error('Fix error:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ==================== PAYMENT HISTORY (USER) ====================
+
+exports.getPaymentHistory = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error('No authenticated user found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+
+    const userId = req.user.id;
+    const { page = 1, limit = 20, status } = req.query;
+
+    console.log('===== PAYMENT HISTORY DEBUG =====');
+    console.log('Logged in user ID:', userId);
+    console.log('User email:', req.user.email);
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const filter = { userId };
+    if (status && status !== 'all') {
+      filter.paymentStatus = status;
+    }
+
+    console.log('Filter being applied:', JSON.stringify(filter));
+
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where: filter,
+        skip,
+        take: parseInt(limit),
+        select: {
+          id: true,
+          orderNumber: true,
+          amount: true,
+          phoneNumber: true,
+          paymentStatus: true,
+          paymentReference: true,
+          status: true,
+          deliveryStatus: true,
+          deliveryMessage: true,
+          createdAt: true,
+          deliveredAt: true,
+          bundle: {
+            select: {
+              name: true,
+              network: true,
+              dataSize: true,
+              sellingPrice: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      }),
+      prisma.order.count({ where: filter })
+    ]);
+
+    console.log(`Found ${orders.length} orders for user ${userId}`);
+    console.log('===============================');
+
+    const paymentHistory = orders.map(order => ({
+      id: order.id,
+      orderNumber: order.orderNumber,
+      bundleName: order.bundle.name,
+      network: order.bundle.network,
+      dataSize: order.bundle.dataSize,
+      amount: order.amount,
+      phoneNumber: order.phoneNumber,
+      paymentStatus: order.paymentStatus,
+      paymentReference: order.paymentReference,
+      orderStatus: order.status,
+      deliveryStatus: order.deliveryStatus,
+      deliveryMessage: order.deliveryMessage,
+      date: order.createdAt,
+      completedDate: order.deliveredAt
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        payments: paymentHistory,
+        pagination: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          hasNext: skip + parseInt(limit) < total
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get payment history error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment history'
+    });
+  }
+};
+
+exports.getPaymentDetails = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!req.user || !req.user.id) {
+      console.error('No authenticated user found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+
+    const userId = req.user.id;
+
+    console.log('===== PAYMENT DETAILS DEBUG =====');
+    console.log('User ID:', userId);
+    console.log('Order ID:', orderId);
+
+    const order = await prisma.order.findFirst({
+      where: {
+        id: orderId,
+        userId: userId
+      },
+      include: {
+        bundle: true
+      }
+    });
+
+    if (!order) {
+      console.log('Order not found or does not belong to user');
+      return res.status(404).json({
+        success: false,
+        message: 'Payment record not found'
+      });
+    }
+
+    console.log('Order found and belongs to user');
+    console.log('===============================');
+
+    res.json({
+      success: true,
+      data: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        bundleName: order.bundle.name,
+        network: order.bundle.network,
+        dataSize: order.bundle.dataSize,
+        amount: order.amount,
+        phoneNumber: order.phoneNumber,
+        paymentStatus: order.paymentStatus,
+        paymentReference: order.paymentReference,
+        orderStatus: order.status,
+        deliveryStatus: order.deliveryStatus,
+        deliveryMessage: order.deliveryMessage,
+        date: order.createdAt,
+        deliveredAt: order.deliveredAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Get payment details error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment details'
+    });
   }
 };

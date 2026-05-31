@@ -15,7 +15,6 @@ exports.protect = async (req, res, next) => {
       });
     }
 
-    // REMOVE the 'access' type check - just verify normally
     const { valid, decoded, error } = jwtUtils.verifyToken(token);
 
     if (!valid) {
@@ -36,8 +35,9 @@ exports.protect = async (req, res, next) => {
       });
     }
 
+    // CHANGE: Set req.user with 'id' instead of 'userId'
     req.user = {
-      userId: decoded.userId,
+      id: decoded.userId,      // ← CHANGE THIS
       email: decoded.email,
       role: decoded.role
     };

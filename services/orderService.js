@@ -93,23 +93,24 @@ const validateCreateOrderInput = (bundleId, phoneNumber) => {
 
 // ==================== CORE FUNCTIONS ====================
 
-const createOrder = async (bundleId, phoneNumber, userId = null) => {
+const createOrder = async (bundleId, phoneNumber, customerEmail = null, customerName = null, userId = null) => {
   validateCreateOrderInput(bundleId, phoneNumber);
-  
+
   try {
     const bundle = await prisma.bundle.findUnique({
       where: { id: bundleId, isActive: true }
     });
-    
+
     if (!bundle) throw new Error('Bundle not found or unavailable');
     if (bundle.stock <= 0) throw new Error('Bundle out of stock');
-    
+
     const order = await prisma.order.create({
       data: {
         orderNumber: generateOrderNumber(),
-        userId,
+        userId,        // ✅ links order to logged-in user (null for guests)
         bundleId,
         phoneNumber,
+        // customerEmail and customerName removed — not in Prisma schema
         amount: bundle.sellingPrice,
         paymentStatus: CONSTANTS.PAYMENT_STATUS.PENDING,
         status: CONSTANTS.ORDER_STATUS.PENDING,
@@ -117,15 +118,15 @@ const createOrder = async (bundleId, phoneNumber, userId = null) => {
       },
       include: { bundle: true }
     });
-    
+
     console.log(`Order created: ${order.orderNumber} | Amount: GHS ${bundle.sellingPrice}`);
-    
+
     if (order.userId) {
       await notificationService.orderCreated(order);
     }
-    
+
     return order;
-    
+
   } catch (error) {
     console.error('createOrder failed:', error.message);
     throw new Error(`Order creation failed: ${error.message}`);

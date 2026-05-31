@@ -155,7 +155,6 @@ exports.updateBundlePricing = async (req, res) => {
   }
 };
 
-// Update bundle stock
 exports.updateBundleStock = async (req, res) => {
   try {
     const { id } = req.params;
@@ -180,7 +179,6 @@ exports.updateBundleStock = async (req, res) => {
   }
 };
 
-// Toggle bundle status (enable/disable)
 exports.toggleBundleStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -205,7 +203,6 @@ exports.toggleBundleStatus = async (req, res) => {
   }
 };
 
-// Create new bundle
 exports.createBundle = async (req, res) => {
   try {
     const bundleData = req.body;
@@ -238,7 +235,6 @@ exports.createBundle = async (req, res) => {
   }
 };
 
-// Delete bundle
 exports.deleteBundle = async (req, res) => {
   try {
     const { id } = req.params;
@@ -388,7 +384,8 @@ exports.getOrderStats = async (req, res) => {
   }
 };
 
-// ==================== USER MANAGEMENT ====================
+// ==================== USER MANAGEMENT (FIXED) ====================
+
 exports.getAllUsers = async (req, res) => {
   try {
     console.log('Fetching all users...');
@@ -399,16 +396,16 @@ exports.getAllUsers = async (req, res) => {
         name: true,
         email: true,
         role: true,
+        isActive: true,
         createdAt: true,
+        _count: {
+          select: { orders: true }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
     
     const usersWithStats = await Promise.all(users.map(async (user) => {
-      const orderCount = await prisma.order.count({
-        where: { userId: user.id }
-      });
-      
       const totalSpentResult = await prisma.order.aggregate({
         where: { 
           userId: user.id,
@@ -423,8 +420,8 @@ exports.getAllUsers = async (req, res) => {
         email: user.email,
         phone: 'N/A',
         role: user.role,
-        status: 'active',
-        orders: orderCount,
+        status: user.isActive ? 'active' : 'inactive',
+        orders: user._count.orders,
         totalSpent: totalSpentResult._sum.amount || 0,
         joined: user.createdAt
       };
@@ -485,9 +482,9 @@ exports.getUserById = async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        phone: 'N/A',
+        phone: user.phoneNumber || 'N/A',
         role: user.role,
-        status: 'active',
+        status: user.isActive ? 'active' : 'inactive',
         orders: user.orders,
         orderCount: orderCount,
         totalSpent: totalSpentResult._sum.amount || 0,
@@ -529,7 +526,7 @@ exports.updateUserStatus = async (req, res) => {
     console.error('Update user status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to update user status. Make sure isActive field exists in User model.',
+      message: 'Failed to update user status',
       error: error.message
     });
   }
@@ -563,7 +560,6 @@ exports.deleteUser = async (req, res) => {
 
 // ==================== SETTINGS MANAGEMENT ====================
 
-// Get general settings
 exports.getGeneralSettings = async (req, res) => {
   try {
     let settings = await prisma.settings.findFirst();
@@ -595,7 +591,6 @@ exports.getGeneralSettings = async (req, res) => {
   }
 };
 
-// Update general settings
 exports.updateGeneralSettings = async (req, res) => {
   try {
     const { profitMargin, lowStockAlert, currency } = req.body;
@@ -627,7 +622,6 @@ exports.updateGeneralSettings = async (req, res) => {
   }
 };
 
-// Get API keys
 exports.getApiKeys = async (req, res) => {
   try {
     let apiKeys = await prisma.apiKeys.findFirst();
@@ -665,7 +659,6 @@ exports.getApiKeys = async (req, res) => {
   }
 };
 
-// Update API keys
 exports.updateApiKeys = async (req, res) => {
   try {
     const { provider, apiKey, username, baseUrl } = req.body;
